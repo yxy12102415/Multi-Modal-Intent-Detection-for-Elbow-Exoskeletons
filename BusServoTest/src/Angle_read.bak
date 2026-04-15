@@ -1,0 +1,68 @@
+#include <Arduino.h>
+#include <Dynamixel2Arduino.h>
+
+#define DXL_RX_PIN 2    
+#define DXL_TX_PIN 4    
+#define DXL_DIR_PIN 18  
+#define DXL_SERIAL Serial2
+
+const uint8_t DXL_ID = 1; // 确认你的电机 ID 是否真的是 1
+Dynamixel2Arduino dxl(DXL_SERIAL, DXL_DIR_PIN);
+
+// 调优参数
+float K_ASSIST = 25.0; 
+int32_t last_pos = 0;
+
+void setup() {
+  Serial.begin(115200);
+  
+  // 强制以 1Mbps 初始化
+  DXL_SERIAL.begin(1000000, SERIAL_8N1, DXL_RX_PIN, DXL_TX_PIN);
+  dxl.begin(1000000);
+  dxl.setPortProtocolVersion(2.0);
+
+  Serial.println("--- 深度调试模式启动 ---");
+  
+  // 检查电机是否在线
+  if(dxl.ping(DXL_ID)) {
+    Serial.println("电机连接成功！正在切换模式...");
+    dxl.torqueOff(DXL_ID);
+    dxl.setOperatingMode(DXL_ID, OP_CURRENT); 
+    dxl.torqueOn(DXL_ID);
+  } else {
+    Serial.println("【错误】找不到电机！请检查 ID 是否为 1，或尝试搜索所有 ID。");
+  }
+
+  last_pos = dxl.getPresentPosition(DXL_ID);
+}
+
+void loop() {
+  // 1. 读取位置 (Position)
+  int32_t current_pos = dxl.getPresentPosition(DXL_ID);
+  
+  // 2. 计算速度 (Velocity/Diff)
+  int32_t diff = current_pos - last_pos;
+
+  // 3. 计算辅助力 (Assist Torque)
+  int16_t target_torque = (int16_t)(diff * K_ASSIST);
+  target_torque = constrain(target_torque, -150, 150); // 安全限制
+
+  // 4. 执行助力
+  if (abs(diff) > 1) {
+    dxl.writeControlTableItem(102, DXL_ID, target_torque);
+  } else {
+    dxl.writeControlTableItem(102, DXL_ID, 0);
+  }
+
+  // 5. 实时输出：格式为 [位置, 速度, 辅助力]
+  // 这种格式最适合 Teleplot 或 Serial Plotter
+  Serial.print("Pos:");
+  Serial.print(current_pos);
+  Serial.print(",Vel:");
+  Serial.print(diff);
+  Serial.print(",Torque:");
+  Serial.println(target_torque);
+
+  last_pos = current_pos;
+  delay(10); 
+}
